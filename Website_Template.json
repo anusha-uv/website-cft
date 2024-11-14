@@ -1,0 +1,232 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "CloudFormation template for Website stack",
+    "Parameters": {
+        "CountryCode": {
+            "Type": "String"
+        },
+        "LambdaFunctionName": {
+            "Type": "String"
+        },
+        "LambdaCodeS3Bucket": {
+            "Type": "String"
+        },
+        "LambdaCodeS3Key": {
+            "Type": "String"
+        },
+        "LambdaExecutionRoleName": {
+            "Type": "String"
+        },
+        "APIName": {
+            "Type": "String",
+            "Description": "Name of the REST API"
+        },
+        "APIGatewayResourceName": {
+            "Type": "String",
+            "Description": "API Gateway resource name"
+        },
+        "AuthorizationType": {
+            "Type": "String",
+            "Default": "NONE",
+            "AllowedValues": ["NONE", "AWS_IAM"],
+            "Description": "Authorization type for API Gateway method."
+        },
+        "IntegrationType": {
+            "Type": "String",
+            "Default": "AWS",
+            "AllowedValues": ["AWS", "AWS_PROXY"],
+            "Description": "Type of integration with API Gateway."
+        }
+    },
+    "Resources": {
+        "LambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "FunctionName": {
+                    "Fn::Sub": "${LambdaFunctionName}-${CountryCode}"
+                },
+                "Role": {
+                    "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${LambdaExecutionRoleName}"
+                },
+                "Code": {
+                    "S3Bucket": { "Ref": "LambdaCodeS3Bucket" },
+                    "S3Key": { "Ref": "LambdaCodeS3Key" }
+                },
+                "Handler": "hello.handler",
+                "Runtime": "provided.al2",
+                "Architectures": ["arm64"]
+                }
+            },
+        "APIGatewayApi": {
+            "Type": "AWS::ApiGateway::RestApi",
+            "Properties": {
+                "Name": {
+                    "Fn::Sub": "${APIName}-${CountryCode}"
+                }
+            }
+        },
+        "APIGatewayResource": {
+            "Type": "AWS::ApiGateway::Resource",
+            "Properties": {
+                "RestApiId": {
+                    "Ref": "APIGatewayApi"
+                },
+                "ParentId": {
+                    "Fn::GetAtt": [
+                        "APIGatewayApi",
+                        "RootResourceId"
+                    ]
+                },
+                "PathPart": {
+                    "Ref": "APIGatewayResourceName"
+                }
+            }
+        },
+        "PostMethod": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "HttpMethod": "POST",
+                "ResourceId": {
+                    "Ref": "APIGatewayResource"
+                },
+                "RestApiId": {
+                    "Ref": "APIGatewayApi"
+                },
+                "AuthorizationType": {
+                    "Ref": "AuthorizationType"
+                },
+                "Integration": {
+                    "Type": {
+                        "Ref": "IntegrationType"
+                    },
+                    "IntegrationHttpMethod": "POST",
+                    "Uri": {
+                        "Fn::Sub": [
+                            "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambda_arn}/invocations",
+                            {
+                                "lambda_arn": { "Fn::GetAtt": ["LambdaFunction", "Arn"] }
+                            }
+                        ]
+                    },
+                    "RequestTemplates": {
+                        "application/json": "{\"statusCode\": 200}"
+                    },
+                    "IntegrationResponses": [
+                        {
+                            "StatusCode": "200",
+                            "ResponseParameters": {
+                                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                                "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,POST'",
+                                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-Content-Sha256'"
+                            }  
+                        }
+                    ]
+                },
+                "MethodResponses": [
+                    {
+                        "StatusCode": "200",
+                        "ResponseParameters": {
+                            "method.response.header.Access-Control-Allow-Origin": true,
+                            "method.response.header.Access-Control-Allow-Methods": true,
+                            "method.response.header.Access-Control-Allow-Headers": true                               
+                        },
+                        "ResponseModels": {
+                            "application/json": "Empty"
+                        }
+                    }
+                ]
+            }
+        }, 
+        "OptionsMethod": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "HttpMethod": "OPTIONS",
+                "ResourceId": {
+                    "Ref": "APIGatewayResource"
+                },
+                "RestApiId": {
+                    "Ref": "APIGatewayApi"
+                },
+                "AuthorizationType": {
+                    "Ref": "AuthorizationType"
+                },
+                "Integration": {
+                    "Type": "MOCK",
+                    "RequestTemplates": {
+                        "application/json": "{\"statusCode\": 200}"
+                    },
+                    "IntegrationResponses": [
+                        {
+                            "StatusCode": "200",
+                            "ResponseParameters": {
+                                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                                "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,POST'",
+                                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-Content-Sha256'"
+                            }
+                        }
+                    ]
+                },
+                "MethodResponses": [
+                    {
+                        "StatusCode": "200",
+                        "ResponseParameters": {
+                            "method.response.header.Access-Control-Allow-Origin": true,
+                            "method.response.header.Access-Control-Allow-Methods": true,
+                            "method.response.header.Access-Control-Allow-Headers": true
+                        },
+                        "ResponseModels": {
+                            "application/json": "Empty"
+                        }
+                    }
+                ]
+            }
+        },
+        "APIDeployment": {
+            "Type": "AWS::ApiGateway::Deployment",
+            "DependsOn": ["PostMethod", "OptionsMethod"],
+            "Properties": {
+                "RestApiId": { "Ref": "APIGatewayApi" }
+            }
+        },
+        "APIGatewayStage": {
+            "Type": "AWS::ApiGateway::Stage",
+            "Properties": {
+                "DeploymentId": { "Ref": "APIDeployment" },
+                "RestApiId": { "Ref": "APIGatewayApi" },
+                "StageName": "prod",
+                "MethodSettings": [
+                    {
+                        "DataTraceEnabled": true,
+                        "HttpMethod": "*",
+                        "ResourcePath": "/*",
+                        "LoggingLevel": "INFO",
+                        "MetricsEnabled": true
+                    }
+                ]
+            }
+        },
+        "LambdaInvokePermission": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "Action": "lambda:InvokeFunction",
+                "FunctionName": { "Ref": "LambdaFunction" },
+                "Principal": "apigateway.amazonaws.com",
+                "SourceArn": {
+                    "Fn::Sub": [
+                        "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${api}/*/*/*",
+                        {
+                            "api" : {"Ref": "APIGatewayApi"}
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "LambdaFunctionArn": {
+            "Value": {
+                "Fn::GetAtt": ["LambdaFunction", "Arn"]
+            }
+        }
+    }
+}
